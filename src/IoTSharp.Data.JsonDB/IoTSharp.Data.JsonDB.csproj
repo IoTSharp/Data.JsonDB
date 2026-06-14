@@ -14,10 +14,10 @@
       <PackagePath>\</PackagePath>
       <Link>README.md</Link>
     </None>
-    <None Include="$(MSBuildThisFileDirectory)..\..\assets\iotsharp128.png">
+    <None Include="$(MSBuildThisFileDirectory)..\..\assets\jsondb-logo.png">
       <Pack>true</Pack>
       <PackagePath>\</PackagePath>
-      <Link>iotsharp128.png</Link>
+      <Link>jsondb-logo.png</Link>
     </None>
   </ItemGroup>
 

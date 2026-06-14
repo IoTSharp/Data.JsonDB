@@ -9,7 +9,7 @@
     <PackageProjectUrl>https://github.com/IoTSharp/Data.JsonDB</PackageProjectUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>iotsharp128.png</PackageIcon>
+    <PackageIcon>jsondb-logo.png</PackageIcon>
     <PackageReleaseNotes>See https://github.com/IoTSharp/Data.JsonDB/releases</PackageReleaseNotes>
   </PropertyGroup>
 

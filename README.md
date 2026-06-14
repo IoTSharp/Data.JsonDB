@@ -1,4 +1,7 @@
-# IoTSharp.Data.JsonDB
+<h1>
+  <img src="assets/jsondb-logo.png" alt="IoTSharp.Data.JsonDB logo" width="48" height="48" align="absmiddle" />
+  IoTSharp.Data.JsonDB
+</h1>
 
 IoTSharp.Data.JsonDB is a lightweight in-memory relational database engine that executes SQL queries over JSON data through a full ADO.NET interface.
 
