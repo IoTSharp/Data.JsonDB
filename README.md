@@ -1,5 +1,5 @@
 <h1>
-  <img src="assets/jsondb-logo.png" alt="IoTSharp.Data.JsonDB logo" width="48" height="48" align="absmiddle" />
+  <img src="assets/jsondb-logo-64.png" alt="IoTSharp.Data.JsonDB logo" width="48" height="48" align="absmiddle" />
   IoTSharp.Data.JsonDB
 </h1>
 
@@ -84,3 +84,13 @@ dotnet pack src/IoTSharp.Data.JsonDB/IoTSharp.Data.JsonDB.csproj -c Release
 ```
 
 NuGet publishing is handled by GitHub Actions when a tag starting with `v` is pushed, for example `v1.0.0`.
+
+## Logo Assets
+
+- `assets/jsondb-logo-32.png`
+- `assets/jsondb-logo-48.png`
+- `assets/jsondb-logo-64.png`
+- `assets/jsondb-logo-128.png`
+- `assets/jsondb-logo-256.png`
+- `assets/jsondb-logo-512.png`
+- `assets/jsondb-logo-source.png`
