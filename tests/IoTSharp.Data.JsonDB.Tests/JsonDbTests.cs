@@ -127,6 +127,96 @@ namespace IoTSharp.Data.JsonDB.Tests
             Assert.IsFalse(reader.Read());
         }
 
+        [TestMethod]
+        public void Select_CountStar_WithWhere_Works()
+        {
+            using var conn = OpenFromJson(SampleUsersJson);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) AS total FROM input WHERE status = \"active\"";
+
+            Assert.AreEqual(2L, Convert.ToInt64(cmd.ExecuteScalar()));
+        }
+
+        [TestMethod]
+        public void Select_CountField_SkipsNullValues()
+        {
+            using var conn = OpenFromJson("""[{"name":"a"},{"name":null},{"other":"c"}]""");
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(name) AS total FROM input";
+
+            Assert.AreEqual(1L, Convert.ToInt64(cmd.ExecuteScalar()));
+        }
+
+        [TestMethod]
+        public void Select_CountStar_IgnoresLimit()
+        {
+            using var conn = OpenFromJson(SampleUsersJson);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) AS total FROM input LIMIT 1";
+
+            Assert.AreEqual(3L, Convert.ToInt64(cmd.ExecuteScalar()));
+        }
+
+        [TestMethod]
+        public void Select_CommonAggregates_Work()
+        {
+            using var conn = OpenFromJson(SampleUsersJson);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT SUM(priority) AS sum, TOTAL(priority) AS total, AVG(priority) AS avg, MIN(priority) AS min, MAX(priority) AS max FROM input";
+            using var reader = cmd.ExecuteReader();
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(8m, Convert.ToDecimal(reader["sum"]));
+            Assert.AreEqual(8m, Convert.ToDecimal(reader["total"]));
+            Assert.AreEqual(8m / 3m, Convert.ToDecimal(reader["avg"]));
+            Assert.AreEqual(2m, Convert.ToDecimal(reader["min"]));
+            Assert.AreEqual(3m, Convert.ToDecimal(reader["max"]));
+            Assert.IsFalse(reader.Read());
+        }
+
+        [TestMethod]
+        public void Select_Aggregates_EmptyInputFollowSqliteBasics()
+        {
+            using var conn = OpenFromJson("[]");
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) AS count, SUM(priority) AS sum, TOTAL(priority) AS total, AVG(priority) AS avg FROM input";
+            using var reader = cmd.ExecuteReader();
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(0L, Convert.ToInt64(reader["count"]));
+            Assert.AreEqual(DBNull.Value, reader["sum"]);
+            Assert.AreEqual(0m, Convert.ToDecimal(reader["total"]));
+            Assert.AreEqual(DBNull.Value, reader["avg"]);
+        }
+
+        [TestMethod]
+        public void Select_GroupConcatAndStringAgg_Work()
+        {
+            using var conn = OpenFromJson(SampleUsersJson);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT GROUP_CONCAT(username) AS names, STRING_AGG(profile.name, \"|\") AS displayNames FROM input";
+            using var reader = cmd.ExecuteReader();
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual("bob,alice,charlie", reader["names"]);
+            Assert.AreEqual("Bob|Alice|Charlie", reader["displayNames"]);
+        }
+
+        [TestMethod]
+        public void Select_GroupBy_WithHavingOrderByAndLimit_Works()
+        {
+            using var conn = OpenFromJson(SampleUsersJson);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT sex, COUNT(*) AS count, SUM(priority) AS priorityTotal FROM input GROUP BY sex HAVING count > 1 ORDER BY priorityTotal DESCNUM LIMIT 1";
+            using var reader = cmd.ExecuteReader();
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual("male", reader["sex"]);
+            Assert.AreEqual(2L, Convert.ToInt64(reader["count"]));
+            Assert.AreEqual(5m, Convert.ToDecimal(reader["priorityTotal"]));
+            Assert.IsFalse(reader.Read());
+        }
+
         // ─── INSERT ──────────────────────────────────────────────────────────────────
 
         [TestMethod]

@@ -6,7 +6,8 @@ with a full ADO.NET interface.
 ## Features
 
 - SQL `SELECT`, `INSERT`, `UPDATE`, `DELETE` over JSON arrays and objects
-- `WHERE`, `ORDER BY` (with `asc`/`desc`/`ascnum`/`descnum`), `LIMIT`
+- `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY` (with `asc`/`desc`/`ascnum`/`descnum`), `LIMIT`
+- SQLite-style basic aggregate functions: `COUNT`, `SUM`, `TOTAL`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `STRING_AGG`
 - Arithmetic and boolean expressions, function registration
 - Path-style field access (`profile.name`, `metrics.score`)
 - Standard ADO.NET interface: `DbConnection`, `DbCommand`, `DbDataReader`, `DbParameter`
@@ -197,6 +198,15 @@ FROM input
 WHERE condition
 ORDER BY field1 ASC, field2 DESCNUM
 LIMIT offset, count
+
+-- AGGREGATE SELECT
+SELECT category, COUNT(*) AS count, AVG(score) AS averageScore
+FROM input
+WHERE status = "active"
+GROUP BY category
+HAVING count > 1
+ORDER BY averageScore DESCNUM
+LIMIT 0, 10
 
 -- INSERT
 INSERT INTO input SET field1 = value1, nested.field = value2

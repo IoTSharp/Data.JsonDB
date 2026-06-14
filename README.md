@@ -8,7 +8,8 @@ IoTSharp.Data.JsonDB is a lightweight in-memory relational database engine that 
 ## Features
 
 - SQL `SELECT`, `INSERT`, `UPDATE`, `DELETE` over JSON arrays and objects
-- `WHERE`, `ORDER BY` with `asc`, `desc`, `ascnum`, `descnum`, and `LIMIT`
+- `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY` with `asc`, `desc`, `ascnum`, `descnum`, and `LIMIT`
+- SQLite-style basic aggregate functions: `COUNT`, `SUM`, `TOTAL`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT`, `STRING_AGG`
 - Arithmetic and boolean expressions with custom function registration
 - Path-style field access such as `profile.name` and `metrics.score`
 - Standard ADO.NET types: `DbConnection`, `DbCommand`, `DbDataReader`, `DbParameter`, `DbDataAdapter`
@@ -69,6 +70,12 @@ FROM input
 WHERE status = "active"
 ORDER BY score DESCNUM
 LIMIT 0, 10
+
+SELECT category, COUNT(*) AS count, AVG(score) AS averageScore
+FROM input
+GROUP BY category
+HAVING count > 1
+ORDER BY averageScore DESCNUM
 
 INSERT INTO input SET id = 3, name = "Cora"
 UPDATE input SET score = score + 1 WHERE id = 3

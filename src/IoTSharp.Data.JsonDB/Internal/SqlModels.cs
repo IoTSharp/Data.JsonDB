@@ -26,6 +26,8 @@ namespace IoTSharp.Data.JsonDB.Internal
         string Table,
         IReadOnlyList<SqlSelectItem> Items,
         SqlExpression? Where,
+        IReadOnlyList<SqlExpression> GroupBy,
+        SqlExpression? Having,
         IReadOnlyList<SqlOrderByItem> OrderBy,
         SqlLimit? Limit) : SqlStatement(Table);
 
@@ -44,7 +46,25 @@ namespace IoTSharp.Data.JsonDB.Internal
 
     internal sealed record SqlInsertStatement(string Table, IReadOnlyList<SqlAssignment> Assignments) : SqlStatement(Table);
 
-    internal sealed record SqlSelectItem(SqlExpression? Expression, string Alias, bool IsWildcard);
+    internal sealed record SqlSelectItem(
+        SqlExpression? Expression,
+        string Alias,
+        bool IsWildcard,
+        SqlAggregateFunction AggregateFunction,
+        IReadOnlyList<SqlExpression> AggregateArguments);
+
+    internal enum SqlAggregateFunction
+    {
+        None,
+        Count,
+        Sum,
+        Total,
+        Avg,
+        Min,
+        Max,
+        GroupConcat,
+        StringAgg,
+    }
 
     internal sealed record SqlOrderByItem(SqlExpression Expression, bool Descending, bool Numeric);
 

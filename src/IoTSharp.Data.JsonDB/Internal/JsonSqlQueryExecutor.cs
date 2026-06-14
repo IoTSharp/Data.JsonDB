@@ -75,12 +75,50 @@ namespace IoTSharp.Data.JsonDB.Internal
 
         private static JsonArray ExecuteSelect(SqlSelectStatement statement, SqlExecutionContext context)
         {
-            var rows = FilterAndSortRows(statement.Where, statement.OrderBy, statement.Limit, context);
             var result = new JsonArray();
 
+            if (statement.Items.Any(static item => item.AggregateFunction != SqlAggregateFunction.None) ||
+                statement.GroupBy.Count > 0)
+            {
+                return ExecuteAggregateSelect(statement, context);
+            }
+
+            var rows = FilterAndSortRows(statement.Where, statement.OrderBy, statement.Limit, context);
             foreach (var row in rows)
             {
                 result.Add(ProjectRow(row, statement.Items, context));
+            }
+
+            return result;
+        }
+
+        private static JsonArray ExecuteAggregateSelect(SqlSelectStatement statement, SqlExecutionContext context)
+        {
+            var rows = FilterAndSortRows(statement.Where, Array.Empty<SqlOrderByItem>(), null, context);
+            var groups = BuildGroups(rows, statement.GroupBy, context);
+            var projected = new List<SqlRowContext>(groups.Count);
+
+            foreach (var group in groups)
+            {
+                var node = ProjectAggregateRow(group.Rows, group.FirstRow, statement.Items, context);
+                var row = new SqlRowContext(node, -1);
+                if (statement.Having is null || EvaluateBoolean(statement.Having, row, context))
+                {
+                    projected.Add(row);
+                }
+            }
+
+            if (statement.OrderBy.Count > 0)
+            {
+                projected.Sort((left, right) => CompareRows(left, right, statement.OrderBy, context));
+            }
+
+            projected = ApplyLimit(projected, statement.Limit);
+
+            var result = new JsonArray();
+            foreach (var row in projected)
+            {
+                result.Add(row.Node.DeepClone());
             }
 
             return result;
@@ -203,11 +241,221 @@ namespace IoTSharp.Data.JsonDB.Internal
                     continue;
                 }
 
+                if (item.AggregateFunction != SqlAggregateFunction.None)
+                {
+                    throw new InvalidOperationException("Aggregate functions cannot be mixed with row projection.");
+                }
+
                 var value = SqlExpressionEvaluator.Evaluate(item.Expression!, row, context);
                 result[item.Alias] = ConvertToJsonNode(value);
             }
 
             return result;
+        }
+
+        private static JsonNode ProjectAggregateRow(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlRowContext? firstRow,
+            IReadOnlyList<SqlSelectItem> items,
+            SqlExecutionContext context)
+        {
+            JsonObject result = new();
+            foreach (var item in items)
+            {
+                if (item.AggregateFunction == SqlAggregateFunction.None)
+                {
+                    if (firstRow is null)
+                    {
+                        result[item.Alias] = null;
+                        continue;
+                    }
+
+                    var groupValue = SqlExpressionEvaluator.Evaluate(item.Expression!, firstRow.Value, context);
+                    result[item.Alias] = ConvertToJsonNode(groupValue);
+                    continue;
+                }
+
+                var value = EvaluateAggregate(rows, item, context);
+                result[item.Alias] = ConvertToJsonNode(value);
+            }
+
+            return result;
+        }
+
+        private static object? EvaluateAggregate(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlSelectItem item,
+            SqlExecutionContext context)
+        {
+            return item.AggregateFunction switch
+            {
+                SqlAggregateFunction.Count => CountRows(rows, item.AggregateArguments.FirstOrDefault(), context),
+                SqlAggregateFunction.Sum => SumRows(rows, item.AggregateArguments.FirstOrDefault(), context, nullWhenEmpty: true),
+                SqlAggregateFunction.Total => SumRows(rows, item.AggregateArguments.FirstOrDefault(), context, nullWhenEmpty: false),
+                SqlAggregateFunction.Avg => AverageRows(rows, item.AggregateArguments.FirstOrDefault(), context),
+                SqlAggregateFunction.Min => MinMaxRows(rows, item.AggregateArguments.FirstOrDefault(), context, findMax: false),
+                SqlAggregateFunction.Max => MinMaxRows(rows, item.AggregateArguments.FirstOrDefault(), context, findMax: true),
+                SqlAggregateFunction.GroupConcat => ConcatRows(rows, item.AggregateArguments, context),
+                SqlAggregateFunction.StringAgg => ConcatRows(rows, item.AggregateArguments, context),
+                _ => throw new InvalidOperationException("Unsupported aggregate function.")
+            };
+        }
+
+        private static long CountRows(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlExpression? expression,
+            SqlExecutionContext context)
+        {
+            if (expression is null)
+            {
+                return rows.Count;
+            }
+
+            return rows.LongCount(row => SqlExpressionEvaluator.Evaluate(expression, row, context) is not null);
+        }
+
+        private static object? SumRows(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlExpression? expression,
+            SqlExecutionContext context,
+            bool nullWhenEmpty)
+        {
+            decimal total = 0;
+            var count = 0;
+            foreach (var value in EvaluateAggregateValues(rows, expression, context))
+            {
+                if (TryConvertToDecimal(value, out var number))
+                {
+                    total += number;
+                    count++;
+                }
+            }
+
+            return count == 0 && nullWhenEmpty ? null : total;
+        }
+
+        private static object? AverageRows(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlExpression? expression,
+            SqlExecutionContext context)
+        {
+            decimal total = 0;
+            var count = 0;
+            foreach (var value in EvaluateAggregateValues(rows, expression, context))
+            {
+                if (TryConvertToDecimal(value, out var number))
+                {
+                    total += number;
+                    count++;
+                }
+            }
+
+            return count == 0 ? null : total / count;
+        }
+
+        private static object? MinMaxRows(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlExpression? expression,
+            SqlExecutionContext context,
+            bool findMax)
+        {
+            object? best = null;
+            var hasBest = false;
+            foreach (var value in EvaluateAggregateValues(rows, expression, context))
+            {
+                if (value is null)
+                {
+                    continue;
+                }
+
+                if (!hasBest)
+                {
+                    best = value;
+                    hasBest = true;
+                    continue;
+                }
+
+                var comparison = CompareValues(value, best, numericOnly: false);
+                if (findMax ? comparison > 0 : comparison < 0)
+                {
+                    best = value;
+                }
+            }
+
+            return hasBest ? best : null;
+        }
+
+        private static object? ConcatRows(
+            IReadOnlyList<SqlRowContext> rows,
+            IReadOnlyList<SqlExpression> arguments,
+            SqlExecutionContext context)
+        {
+            if (arguments.Count == 0)
+            {
+                return null;
+            }
+
+            var separator = arguments.Count > 1
+                ? Convert.ToString(SqlExpressionEvaluator.Evaluate(arguments[1], rows.FirstOrDefault(), context), CultureInfo.InvariantCulture) ?? ","
+                : ",";
+            var values = EvaluateAggregateValues(rows, arguments[0], context)
+                .Where(value => value is not null)
+                .Select(value => Convert.ToString(value, CultureInfo.InvariantCulture))
+                .Where(value => !string.IsNullOrEmpty(value))
+                .ToArray();
+
+            return values.Length == 0 ? null : string.Join(separator, values);
+        }
+
+        private static IEnumerable<object?> EvaluateAggregateValues(
+            IReadOnlyList<SqlRowContext> rows,
+            SqlExpression? expression,
+            SqlExecutionContext context)
+        {
+            if (expression is null)
+            {
+                return rows.Select(static row => (object?)row.Node);
+            }
+
+            return rows.Select(row => SqlExpressionEvaluator.Evaluate(expression, row, context));
+        }
+
+        private static List<SqlGroupContext> BuildGroups(
+            IReadOnlyList<SqlRowContext> rows,
+            IReadOnlyList<SqlExpression> groupBy,
+            SqlExecutionContext context)
+        {
+            if (groupBy.Count == 0)
+            {
+                return [new SqlGroupContext(string.Empty, rows.ToList(), rows.Count == 0 ? null : rows[0])];
+            }
+
+            var groups = new Dictionary<string, SqlGroupContext>(StringComparer.Ordinal);
+            foreach (var row in rows)
+            {
+                var key = BuildGroupKey(row, groupBy, context);
+                if (!groups.TryGetValue(key, out var group))
+                {
+                    group = new SqlGroupContext(key, [], row);
+                    groups.Add(key, group);
+                }
+
+                group.Rows.Add(row);
+            }
+
+            return groups.Values.ToList();
+        }
+
+        private static string BuildGroupKey(
+            SqlRowContext row,
+            IReadOnlyList<SqlExpression> groupBy,
+            SqlExecutionContext context)
+        {
+            return string.Join('\u001f', groupBy.Select(expression =>
+            {
+                var value = SqlExpressionEvaluator.Evaluate(expression, row, context);
+                return value is null ? "\u0000" : ToComparableString(value);
+            }));
         }
 
         private static List<SqlRowContext> ApplyLimit(List<SqlRowContext> rows, SqlLimit? limit)
@@ -498,5 +746,10 @@ namespace IoTSharp.Data.JsonDB.Internal
                 _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty
             };
         }
+
+        private sealed record SqlGroupContext(
+            string Key,
+            List<SqlRowContext> Rows,
+            SqlRowContext? FirstRow);
     }
 }

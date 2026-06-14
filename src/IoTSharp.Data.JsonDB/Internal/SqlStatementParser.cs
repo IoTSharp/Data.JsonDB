@@ -57,6 +57,8 @@ namespace IoTSharp.Data.JsonDB.Internal
                 clauses.Table,
                 ParseSelectItems(fieldsText),
                 ParseOptionalExpression(clauses.Where),
+                ParseExpressionList(clauses.GroupBy),
+                ParseOptionalExpression(clauses.Having),
                 ParseOrderBy(clauses.OrderBy),
                 ParseLimit(clauses.Limit));
         }
@@ -116,9 +118,11 @@ namespace IoTSharp.Data.JsonDB.Internal
         private static SqlTail ParseClauseSegments(string? table, string tail)
         {
             var whereIndex = FindClauseIndex(tail, "where");
+            var groupByIndex = FindClauseIndex(tail, "group by");
+            var havingIndex = FindClauseIndex(tail, "having");
             var orderIndex = FindClauseIndex(tail, "order by");
             var limitIndex = FindClauseIndex(tail, "limit");
-            var firstClauseIndex = MinPositive(whereIndex, orderIndex, limitIndex);
+            var firstClauseIndex = MinPositive(whereIndex, groupByIndex, havingIndex, orderIndex, limitIndex);
 
             var resolvedTable = string.IsNullOrWhiteSpace(table)
                 ? (firstClauseIndex >= 0 ? tail[..firstClauseIndex].Trim() : tail.Trim())
@@ -128,11 +132,13 @@ namespace IoTSharp.Data.JsonDB.Internal
                 ? string.Empty
                 : (firstClauseIndex >= 0 ? tail[..firstClauseIndex].Trim() : tail.Trim());
 
-            var where = SliceClause(tail, whereIndex, "where", orderIndex, limitIndex);
+            var where = SliceClause(tail, whereIndex, "where", groupByIndex, havingIndex, orderIndex, limitIndex);
+            var groupBy = SliceClause(tail, groupByIndex, "group by", havingIndex, orderIndex, limitIndex);
+            var having = SliceClause(tail, havingIndex, "having", orderIndex, limitIndex);
             var orderBy = SliceClause(tail, orderIndex, "order by", limitIndex);
             var limit = SliceClause(tail, limitIndex, "limit");
 
-            return new SqlTail(resolvedTable, mainBody, where, orderBy, limit);
+            return new SqlTail(resolvedTable, mainBody, where, groupBy, having, orderBy, limit);
         }
 
         private static IReadOnlyList<SqlSelectItem> ParseSelectItems(string text)
@@ -148,17 +154,88 @@ namespace IoTSharp.Data.JsonDB.Internal
 
                 if (trimmed == "*")
                 {
-                    items.Add(new SqlSelectItem(null, "*", true));
+                    items.Add(new SqlSelectItem(null, "*", true, SqlAggregateFunction.None, Array.Empty<SqlExpression>()));
                     continue;
                 }
 
                 var aliasIndex = FindClauseIndex(trimmed, "as");
                 var expressionText = aliasIndex >= 0 ? trimmed[..aliasIndex].Trim() : trimmed;
                 var alias = aliasIndex >= 0 ? trimmed[(aliasIndex + "as".Length)..].Trim() : GetDefaultAlias(expressionText);
-                items.Add(new SqlSelectItem(SqlExpressionParser.Parse(expressionText), alias, false));
+                if (TryParseAggregate(expressionText, out var aggregateFunction, out var aggregateArguments))
+                {
+                    items.Add(new SqlSelectItem(
+                        aggregateArguments.FirstOrDefault(),
+                        alias,
+                        false,
+                        aggregateFunction,
+                        aggregateArguments));
+                    continue;
+                }
+
+                items.Add(new SqlSelectItem(
+                    SqlExpressionParser.Parse(expressionText),
+                    alias,
+                    false,
+                    SqlAggregateFunction.None,
+                    Array.Empty<SqlExpression>()));
             }
 
             return items;
+        }
+
+        private static bool TryParseAggregate(
+            string expressionText,
+            out SqlAggregateFunction aggregateFunction,
+            out IReadOnlyList<SqlExpression> arguments)
+        {
+            aggregateFunction = SqlAggregateFunction.None;
+            arguments = Array.Empty<SqlExpression>();
+            var trimmed = expressionText.Trim();
+            var openIndex = trimmed.IndexOf('(');
+            if (openIndex <= 0 || trimmed[^1] != ')')
+            {
+                return false;
+            }
+
+            aggregateFunction = NormalizeAggregateFunction(trimmed[..openIndex]);
+            if (aggregateFunction == SqlAggregateFunction.None)
+            {
+                return false;
+            }
+
+            var argument = trimmed[(openIndex + 1)..^1].Trim();
+            if (aggregateFunction == SqlAggregateFunction.Count && argument == "*")
+            {
+                return true;
+            }
+
+            if (argument.Length == 0)
+            {
+                throw new ArgumentException($"{trimmed[..openIndex]} requires an argument.", nameof(expressionText));
+            }
+
+            arguments = SplitTopLevel(argument, ',')
+                .Select(segment => segment.Trim())
+                .Where(segment => segment.Length > 0)
+                .Select(SqlExpressionParser.Parse)
+                .ToArray();
+            return true;
+        }
+
+        private static SqlAggregateFunction NormalizeAggregateFunction(string value)
+        {
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "count" => SqlAggregateFunction.Count,
+                "sum" => SqlAggregateFunction.Sum,
+                "total" => SqlAggregateFunction.Total,
+                "avg" => SqlAggregateFunction.Avg,
+                "min" => SqlAggregateFunction.Min,
+                "max" => SqlAggregateFunction.Max,
+                "group_concat" => SqlAggregateFunction.GroupConcat,
+                "string_agg" => SqlAggregateFunction.StringAgg,
+                _ => SqlAggregateFunction.None,
+            };
         }
 
         private static IReadOnlyList<SqlAssignment> ParseAssignments(string text)
@@ -219,6 +296,20 @@ namespace IoTSharp.Data.JsonDB.Internal
             }
 
             return items;
+        }
+
+        private static IReadOnlyList<SqlExpression> ParseExpressionList(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Array.Empty<SqlExpression>();
+            }
+
+            return SplitTopLevel(text, ',')
+                .Select(segment => segment.Trim())
+                .Where(segment => segment.Length > 0)
+                .Select(SqlExpressionParser.Parse)
+                .ToArray();
         }
 
         private static SqlLimit? ParseLimit(string? text)
@@ -426,6 +517,13 @@ namespace IoTSharp.Data.JsonDB.Internal
             return char.IsWhiteSpace(text[index]);
         }
 
-        private sealed record SqlTail(string Table, string MainBody, string? Where, string? OrderBy, string? Limit);
+        private sealed record SqlTail(
+            string Table,
+            string MainBody,
+            string? Where,
+            string? GroupBy,
+            string? Having,
+            string? OrderBy,
+            string? Limit);
     }
 }
